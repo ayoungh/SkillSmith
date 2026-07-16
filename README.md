@@ -68,7 +68,11 @@ Useful release modes:
 ./script/release.sh 1.0.0 --dry-run
 ./script/release.sh 1.0.0 --draft
 ./script/release.sh 1.0.0 --prerelease
+./script/release.sh 1.0.0-alpha.1
 ```
+
+Versions with a suffix such as `-alpha.1`, `-beta.1`, or `-rc.1` are
+automatically marked as GitHub prereleases.
 
 The script does not notarize the app, so macOS may warn people who download it,
 even when it is Developer ID signed.

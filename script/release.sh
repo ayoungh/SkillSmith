@@ -8,7 +8,7 @@ Usage: ./script/release.sh <version> [options]
 Creates a versioned macOS build and publishes it to GitHub Releases.
 
 Arguments:
-  <version>       Release version in X.Y.Z form (for example, 1.0.0)
+  <version>       Semantic version (for example, 1.0.0 or 1.0.0-alpha.1)
 
 Options:
   --draft         Create a draft GitHub release
@@ -64,9 +64,13 @@ if [[ -z "$VERSION" ]]; then
   exit 2
 fi
 
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: version must use X.Y.Z format, for example 1.0.0" >&2
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+  echo "error: version must be semantic, for example 1.0.0 or 1.0.0-alpha.1" >&2
   exit 2
+fi
+
+if [[ "$VERSION" == *-* ]]; then
+  PRERELEASE=true
 fi
 
 for command_name in git gh swift codesign ditto shasum; do
@@ -81,6 +85,7 @@ cd "$ROOT_DIR"
 
 APP_NAME="SkillSmithApp"
 TAG="v$VERSION"
+BUNDLE_VERSION="${VERSION%%-*}"
 COMMIT="$(git rev-parse HEAD)"
 BUILD_NUMBER="$(git rev-list --count HEAD)"
 DIST_DIR="$ROOT_DIR/dist"
@@ -120,7 +125,7 @@ echo "Running tests..."
 swift test
 
 echo "Building release bundle..."
-"$ROOT_DIR/script/package_app.sh" release "$VERSION" "$BUILD_NUMBER"
+"$ROOT_DIR/script/package_app.sh" release "$BUNDLE_VERSION" "$BUILD_NUMBER"
 
 if [[ "$SIGNING_IDENTITY" == "-" ]]; then
   echo "Signing app ad hoc. Set CODESIGN_IDENTITY to use a Developer ID certificate."
