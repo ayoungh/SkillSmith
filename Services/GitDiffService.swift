@@ -1,7 +1,8 @@
 import Foundation
 
-struct GitDiffService {
+struct GitDiffService: @unchecked Sendable {
     private let shell = ShellCommandService()
+    private let fileOperations = FileOperationService()
 
     func checkForUpdates(skill: SkillRecord) async throws -> UpdatePreview {
         guard let upstream = skill.upstream else {
@@ -119,7 +120,34 @@ struct GitDiffService {
         )
     }
 
+    func applyUpdate(skill: SkillRecord, libraryPath: String) async throws -> String {
+        guard skill.isManagedLibrarySource, let upstream = skill.upstream else {
+            throw updateError("Only managed library skills with an upstream can be updated directly.")
+        }
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let ref = upstream.ref.isEmpty ? "main" : upstream.ref
+        let clone = try await shell.run(
+            "/usr/bin/git",
+            arguments: ["clone", "--depth", "1", "--filter=blob:none", "--branch", ref, repositoryURL(from: upstream.repo), tempRoot.path],
+            allowNonZeroExit: true
+        )
+        guard clone.exitCode == 0 else { throw updateError(clone.stderr.isEmpty ? "Could not clone the upstream repository." : clone.stderr) }
+        let candidate = tempRoot.appendingPathComponent(upstream.path)
+        guard FileManager.default.fileExists(atPath: candidate.appendingPathComponent("SKILL.md").path) else {
+            throw updateError("The tracked skill path no longer exists upstream: \(upstream.path)")
+        }
+        let revisionResult = try await shell.run("/usr/bin/git", arguments: ["-C", tempRoot.path, "rev-parse", "HEAD"], allowNonZeroExit: true)
+        try fileOperations.replaceManagedSource(
+            at: URL(fileURLWithPath: skill.source.path, isDirectory: true),
+            with: candidate,
+            libraryPath: libraryPath
+        )
+        return revisionResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func repositoryURL(from repo: String) -> String {
+        if repo.hasPrefix("/") || repo.hasPrefix("file://") { return repo }
         if repo.hasPrefix("http://") || repo.hasPrefix("https://") || repo.hasPrefix("git@") {
             return repo.hasSuffix(".git") ? repo : repo + ".git"
         }
@@ -152,5 +180,9 @@ struct GitDiffService {
         }
 
         return files
+    }
+
+    private func updateError(_ message: String) -> NSError {
+        NSError(domain: "SkillSmith.Update", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 }

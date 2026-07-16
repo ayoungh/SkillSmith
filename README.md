@@ -27,7 +27,7 @@ A native macOS app for managing the agent skills on your machine — discover, i
 ./script/build_and_run.sh
 ```
 
-This builds the app with SwiftPM, assembles `dist/SkillSmithApp.app` with its icon and Info.plist, and launches it. Other modes:
+This builds the app with SwiftPM, assembles `dist/SkillSmith.app` with its icon and Info.plist, and launches it. Other modes:
 
 ```sh
 ./script/build_and_run.sh --debug      # run under lldb

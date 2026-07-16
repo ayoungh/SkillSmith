@@ -78,6 +78,35 @@ struct ShellCommandService {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
+            final class DataBox: @unchecked Sendable { var data = Data() }
+            let stdoutBox = DataBox()
+            let stderrBox = DataBox()
+            let drained = DispatchGroup()
+            drained.enter()
+            drained.enter()
+
+            process.terminationHandler = { process in
+                drained.notify(queue: .global(qos: .userInitiated)) {
+                    let result = CommandResult(
+                        launchPath: launchPath,
+                        arguments: arguments,
+                        exitCode: process.terminationStatus,
+                        stdout: String(decoding: stdoutBox.data, as: UTF8.self),
+                        stderr: String(decoding: stderrBox.data, as: UTF8.self)
+                    )
+
+                    if !allowNonZeroExit && process.terminationStatus != 0 {
+                        continuation.resume(throwing: NSError(
+                            domain: "SkillSmith.ShellCommandService",
+                            code: Int(process.terminationStatus),
+                            userInfo: [NSLocalizedDescriptionKey: result.stderr.isEmpty ? result.stdout : result.stderr]
+                        ))
+                    } else {
+                        continuation.resume(returning: result)
+                    }
+                }
+            }
+
             do {
                 try process.run()
             } catch {
@@ -85,41 +114,13 @@ struct ShellCommandService {
                 return
             }
 
-            // Drain both pipes while the process runs; waiting until exit
-            // before reading deadlocks once output exceeds the pipe buffer.
-            final class DataBox: @unchecked Sendable { var data = Data() }
-
             DispatchQueue.global(qos: .userInitiated).async {
-                let stderrBox = DataBox()
-                let stderrDrained = DispatchGroup()
-                stderrDrained.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    stderrBox.data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                    stderrDrained.leave()
-                }
-
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                stderrDrained.wait()
-                let stderrData = stderrBox.data
-                process.waitUntilExit()
-
-                let result = CommandResult(
-                    launchPath: launchPath,
-                    arguments: arguments,
-                    exitCode: process.terminationStatus,
-                    stdout: String(decoding: stdoutData, as: UTF8.self),
-                    stderr: String(decoding: stderrData, as: UTF8.self)
-                )
-
-                if !allowNonZeroExit && process.terminationStatus != 0 {
-                    continuation.resume(throwing: NSError(
-                        domain: "SkillSmith.ShellCommandService",
-                        code: Int(process.terminationStatus),
-                        userInfo: [NSLocalizedDescriptionKey: result.stderr.isEmpty ? result.stdout : result.stderr]
-                    ))
-                } else {
-                    continuation.resume(returning: result)
-                }
+                stdoutBox.data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                drained.leave()
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
+                stderrBox.data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                drained.leave()
             }
         }
     }

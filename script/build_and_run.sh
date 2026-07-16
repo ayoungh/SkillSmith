@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="SkillSmithApp"
+APP_NAME="SkillSmith"
 BUNDLE_ID="com.ayoungh.SkillSmith"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,6 +10,7 @@ APP_BUNDLE="$ROOT_DIR/dist/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+pkill -x "SkillSmithApp" >/dev/null 2>&1 || true
 
 "$ROOT_DIR/script/package_app.sh" debug
 

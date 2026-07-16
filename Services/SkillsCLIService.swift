@@ -62,6 +62,14 @@ struct SkillsCLIService {
         return try await shell.run("/usr/bin/env", arguments: args, allowNonZeroExit: true)
     }
 
+    func removeSkill(named name: String, fromAgent agent: String) async throws -> CommandResult {
+        try await shell.run(
+            "/usr/bin/env",
+            arguments: ["npx", "skills", "remove", "-g", "--agent", agent, "--skill", name, "-y"],
+            allowNonZeroExit: true
+        )
+    }
+
     func findSkills(query: String, owner: String? = nil) async throws -> CommandResult {
         var args = ["npx", "skills", "find", query]
         if let owner, !owner.isEmpty {

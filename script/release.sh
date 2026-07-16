@@ -83,7 +83,7 @@ done
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-APP_NAME="SkillSmithApp"
+APP_NAME="SkillSmith"
 TAG="v$VERSION"
 BUNDLE_VERSION="${VERSION%%-*}"
 COMMIT="$(git rev-parse HEAD)"

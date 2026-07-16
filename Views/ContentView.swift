@@ -9,23 +9,7 @@ struct ContentView: View {
         NavigationSplitView {
             sidebar
         } detail: {
-            NavigationStack(path: $path) {
-                SkillsHomeView(store: store) { skill in
-                    store.selectedSkillID = skill.id
-                    path = [skill.id]
-                }
-                .navigationDestination(for: SkillRecord.ID.self) { skillID in
-                    if let skill = store.skills.first(where: { $0.id == skillID }) {
-                        SkillDetailView(store: store, skill: skill)
-                    } else {
-                        ContentUnavailableView(
-                            "Skill Not Found",
-                            systemImage: "wand.and.stars",
-                            description: Text("This skill is no longer in the library.")
-                        )
-                    }
-                }
-            }
+            detailContent
         }
         .searchable(text: $store.searchText, placement: .toolbar)
         .sheet(isPresented: $store.createSheetPresented) {
@@ -36,6 +20,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $store.addFromSkillsShPresented) {
             AddFromSkillsShSheet(store: store)
+        }
+        .sheet(item: $store.pendingMutation) { preview in
+            MutationConfirmationSheet(store: store, preview: preview)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -67,6 +54,38 @@ struct ContentView: View {
             } else if let message = store.infoMessage {
                 BannerView(text: message, tint: .blue) {
                     store.infoMessage = nil
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch store.selectedSection ?? .allSkills {
+        case .library:
+            SkillsLibraryManagerView(store: store)
+        case .agents:
+            AgentsManagerView(store: store)
+        case .imports:
+            ImportsManagerView(store: store)
+        case .settings:
+            Color.clear
+        case .allSkills, .installed, .updates:
+            NavigationStack(path: $path) {
+                SkillsHomeView(store: store) { skill in
+                    store.selectedSkillID = skill.id
+                    path = [skill.id]
+                }
+                .navigationDestination(for: SkillRecord.ID.self) { skillID in
+                    if let skill = store.skills.first(where: { $0.id == skillID }) {
+                        SkillDetailView(store: store, skill: skill)
+                    } else {
+                        ContentUnavailableView(
+                            "Skill Not Found",
+                            systemImage: "wand.and.stars",
+                            description: Text("This skill is no longer in the library.")
+                        )
+                    }
                 }
             }
         }

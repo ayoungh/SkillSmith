@@ -36,22 +36,20 @@ struct SettingsView: View {
             List {
                 Section("Discovered Roots") {
                     ForEach(store.availableRoots) { root in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(root.name)
-                            Text(root.path)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(root.name)
+                                Text(root.path)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(root.isAvailable ? "Available" : "Missing")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section("Custom Roots") {
-                    ForEach(store.settings.customAgentRoots) { root in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(root.name)
-                            Text(root.path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            if root.isCustom {
+                                Button("Remove") { store.removeCustomRoot(root) }
+                            }
                         }
                     }
                 }
@@ -61,12 +59,9 @@ struct SettingsView: View {
                 TextField("Root name", text: $newRootName)
                 TextField("Path", text: $newRootPath)
                 Button("Add") {
-                    store.settings.customAgentRoots.append(
-                        AgentRoot(id: UUID().uuidString, name: newRootName, path: newRootPath, isCustom: true)
-                    )
+                    store.addCustomRoot(name: newRootName, path: newRootPath)
                     newRootName = ""
                     newRootPath = ""
-                    store.saveSettings()
                 }
                 .disabled(newRootName.isEmpty || newRootPath.isEmpty)
             }

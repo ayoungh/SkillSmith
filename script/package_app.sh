@@ -5,7 +5,7 @@ CONFIGURATION="${1:-debug}"
 VERSION="${2:-0.0.0}"
 BUILD_NUMBER="${3:-0}"
 
-APP_NAME="SkillSmithApp"
+APP_NAME="SkillSmith"
 BUNDLE_ID="com.ayoungh.SkillSmith"
 MIN_SYSTEM_VERSION="14.0"
 
@@ -16,6 +16,7 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+LEGACY_APP_BUNDLE="$DIST_DIR/SkillSmithApp.app"
 
 case "$CONFIGURATION" in
   debug|release)
@@ -29,7 +30,7 @@ esac
 swift build -c "$CONFIGURATION"
 BUILD_BINARY="$(swift build -c "$CONFIGURATION" --show-bin-path)/$APP_NAME"
 
-rm -rf "$APP_BUNDLE"
+rm -rf "$APP_BUNDLE" "$LEGACY_APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_CONTENTS/Resources"
 cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
