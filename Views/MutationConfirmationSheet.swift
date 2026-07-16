@@ -5,6 +5,10 @@ struct MutationConfirmationSheet: View {
     var preview: MutationPreview
     @State private var confirmation = ""
 
+    private var isApplying: Bool {
+        store.isActive(.destructiveMutation, scope: .mutation)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) {
@@ -38,21 +42,30 @@ struct MutationConfirmationSheet: View {
                     .font(.caption.weight(.semibold))
                 TextField("Confirmation", text: $confirmation)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(isApplying)
             }
 
             HStack {
                 Spacer()
                 Button("Cancel") { store.cancelPendingMutation() }
                     .keyboardShortcut(.cancelAction)
-                Button("Confirm") {
+                    .disabled(isApplying)
+                Button {
                     Task { await store.confirmPendingMutation(confirmation: confirmation) }
+                } label: {
+                    ActivityButtonLabel(
+                        title: "Confirm",
+                        loadingTitle: "Applying…",
+                        isLoading: isApplying
+                    )
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(confirmation != preview.confirmationText || store.isBusy)
+                .disabled(confirmation != preview.confirmationText || isApplying)
             }
         }
         .padding(24)
         .frame(width: 620, height: 470)
+        .interactiveDismissDisabled(isApplying)
     }
 
     private func icon(for kind: MutationKind) -> String {

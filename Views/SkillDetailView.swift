@@ -96,23 +96,34 @@ struct SkillDetailView: View {
                                 }
                             }
                             Spacer()
-                            Button("Remove") {
+                            Button {
                                 Task { await store.removeInstall(install, from: skill) }
+                            } label: {
+                                ActivityButtonLabel(
+                                    title: "Remove",
+                                    loadingTitle: "Removing…",
+                                    isLoading: store.isActive(.remove, scope: .skill(skill.id))
+                                )
                             }
+                            .disabled(store.isMutationActive)
                         }
                         Divider()
                     }
                 }
 
                 if !store.availableRoots.isEmpty {
-                    Menu("Install to Root") {
-                        ForEach(store.availableRoots) { root in
-                            Button(root.name) {
-                                Task { await store.installSelectedSkill(into: root) }
+                    if store.isActive(.install, scope: .skill(skill.id)) {
+                        InlineLoadingLabel(message: "Installing…")
+                    } else {
+                        Menu("Install to Root") {
+                            ForEach(store.availableRoots) { root in
+                                Button(root.name) {
+                                    Task { await store.installSelectedSkill(into: root) }
+                                }
                             }
                         }
+                        .disabled(skill.source.path.isEmpty || store.isMutationActive)
                     }
-                    .disabled(skill.source.path.isEmpty)
                 }
             }
         }
@@ -139,12 +150,26 @@ struct SkillDetailView: View {
                     }
 
                     HStack(spacing: 10) {
-                        Button("Check for Updates") {
+                        Button {
                             Task { await store.checkUpdatesForSelectedSkill() }
+                        } label: {
+                            ActivityButtonLabel(
+                                title: "Check for Updates",
+                                loadingTitle: "Checking…",
+                                isLoading: store.isActive(.checkUpdates, scope: .skill(skill.id))
+                            )
                         }
-                        Button("Apply Update") {
+                        .disabled(store.isMutationActive)
+                        Button {
                             Task { await store.applyUpdateForSelectedSkill() }
+                        } label: {
+                            ActivityButtonLabel(
+                                title: "Apply Update",
+                                loadingTitle: "Applying…",
+                                isLoading: store.isActive(.applyUpdate, scope: .skill(skill.id))
+                            )
                         }
+                        .disabled(store.isMutationActive)
                     }
                 } else {
                     Text("No upstream linked yet.")
@@ -171,14 +196,17 @@ struct SkillDetailView: View {
 
 private struct SkillFileView: View {
     var skillPath: String
-    @State private var content: String?
+    @State private var loadState = SkillFileLoadState.loading
     @State private var isExpanded = false
 
     private static let collapsedLineLimit = 24
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let content, !content.isEmpty {
+            switch loadState {
+            case .loading:
+                InlineLoadingLabel(message: "Loading SKILL.md…")
+            case let .loaded(content):
                 Text(displayedText(from: content))
                     .font(.callout.monospaced())
                     .textSelection(.enabled)
@@ -190,15 +218,29 @@ private struct SkillFileView: View {
                     }
                     .buttonStyle(.link)
                 }
-            } else {
+            case .missing:
                 Text("No SKILL.md found at this skill's source path.")
                     .foregroundStyle(.secondary)
+            case let .failed(message):
+                Label("Could not read SKILL.md: \(message)", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
             }
         }
         .task(id: skillPath) {
             isExpanded = false
+            loadState = .loading
             let url = URL(fileURLWithPath: skillPath).appendingPathComponent("SKILL.md")
-            content = try? String(contentsOf: url, encoding: .utf8)
+            loadState = await Task.detached(priority: .userInitiated) {
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    return SkillFileLoadState.missing
+                }
+                do {
+                    let content = try String(contentsOf: url, encoding: .utf8)
+                    return .loaded(content)
+                } catch {
+                    return .failed(error.localizedDescription)
+                }
+            }.value
         }
     }
 
@@ -212,6 +254,13 @@ private struct SkillFileView: View {
         guard lines.count > Self.collapsedLineLimit else { return text }
         return lines.prefix(Self.collapsedLineLimit).joined(separator: "\n") + "\n…"
     }
+}
+
+private enum SkillFileLoadState: Sendable {
+    case loading
+    case loaded(String)
+    case missing
+    case failed(String)
 }
 
 private struct DetailCard<Content: View>: View {

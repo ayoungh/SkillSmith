@@ -28,22 +28,33 @@ struct SkillsHomeView: View {
 
     private var actionCards: some View {
         HStack(spacing: 12) {
-            ActionCard(title: "Browse skills.sh", systemImage: "magnifyingglass") {
+            ActionCard(title: "Browse skills.sh", systemImage: "magnifyingglass", disabled: store.isMutationActive) {
                 store.addFromSkillsShPresented = true
             }
-            ActionCard(title: "New Skill", systemImage: "plus.circle.fill") {
+            ActionCard(title: "New Skill", systemImage: "plus.circle.fill", disabled: store.isMutationActive) {
                 store.createSheetPresented = true
             }
-            ActionCard(title: "Update All", systemImage: "arrow.trianglehead.2.clockwise") {
+            ActionCard(
+                title: "Update All",
+                systemImage: "arrow.trianglehead.2.clockwise",
+                loadingTitle: "Updating…",
+                isLoading: store.isActive(.updateAll, scope: .skills),
+                disabled: store.isMutationActive
+            ) {
                 Task { await store.updateAllSkillsShSkills() }
             }
         }
     }
 
     private var summaryLine: some View {
-        Text(summaryText)
-            .font(.callout)
-            .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            Text(summaryText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if store.isActive(.refresh, scope: .skills), store.hasCompletedInitialDiscovery {
+                InlineLoadingLabel(message: "Refreshing skills…")
+            }
+        }
     }
 
     private var summaryText: String {
@@ -80,12 +91,20 @@ struct SkillsHomeView: View {
             }
             .padding(.top, 6)
 
-            if store.filteredSkills.isEmpty {
-                ContentUnavailableView(
-                    "No Skills Found",
-                    systemImage: "square.stack.3d.up.slash",
-                    description: Text("Refresh discovery, adjust the search, or pull skills from skills.sh.")
-                )
+            if store.shouldShowInitialSkillsPlaceholder {
+                SkillsLoadingPlaceholder(title: sectionTitle)
+                    .padding(.top, 4)
+            } else if store.filteredSkills.isEmpty {
+                ContentUnavailableView {
+                    Label("No Skills Found", systemImage: "square.stack.3d.up.slash")
+                } description: {
+                    Text("Refresh discovery, adjust the search, or pull skills from skills.sh.")
+                } actions: {
+                    Button("Retry Discovery") {
+                        Task { await store.refresh() }
+                    }
+                    .disabled(store.isActive(.refresh, scope: .skills) || store.isMutationActive)
+                }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 40)
             } else {
@@ -104,16 +123,25 @@ struct SkillsHomeView: View {
 private struct ActionCard: View {
     var title: String
     var systemImage: String
+    var loadingTitle: String = "Loading…"
+    var isLoading = false
+    var disabled = false
     var action: () -> Void
     @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 18)
-                Text(title)
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 18)
+                } else {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 18)
+                }
+                Text(isLoading ? loadingTitle : title)
                     .font(.callout.weight(.medium))
                 Spacer(minLength: 12)
                 Image(systemName: "chevron.right")
@@ -129,6 +157,7 @@ private struct ActionCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .disabled(disabled || isLoading)
         .onHover { isHovering = $0 }
     }
 }

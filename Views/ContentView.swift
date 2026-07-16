@@ -26,9 +26,8 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                if store.isBusy {
-                    ProgressView()
-                        .controlSize(.small)
+                if let message = store.activityMessage(for: .skills) ?? store.activityMessage(for: .app) {
+                    InlineLoadingLabel(message: message)
                 }
 
                 Button {
@@ -37,6 +36,7 @@ struct ContentView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .help("Refresh installed skills")
+                .disabled(store.isActive(.refresh, scope: .skills) || store.isMutationActive)
 
                 SettingsLink {
                     Label("Settings", systemImage: "gearshape")

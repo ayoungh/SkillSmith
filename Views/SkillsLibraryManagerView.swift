@@ -54,6 +54,22 @@ struct SkillsLibraryManagerView: View {
             }
             .width(min: 110, ideal: 150)
         }
+        .overlay {
+            if store.shouldShowInitialSkillsPlaceholder {
+                SkillsLoadingPlaceholder(title: "Skills Library")
+                    .padding(28)
+                    .background(.background)
+            }
+        }
+        .overlay(alignment: .top) {
+            if store.isActive(.refresh, scope: .skills), store.hasCompletedInitialDiscovery {
+                InlineLoadingLabel(message: "Refreshing skills…")
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 8)
+            }
+        }
         .togglesInspectorOnRowClick(selection: $store.librarySelection, isPresented: $showInspector)
         .navigationTitle("Skills Library")
         .inspector(isPresented: $showInspector) {
@@ -67,6 +83,7 @@ struct SkillsLibraryManagerView: View {
                 } label: {
                     Label("New Skill", systemImage: "plus")
                 }
+                .disabled(store.isMutationActive)
 
                 Menu {
                     ForEach(store.availableRoots) { root in
@@ -77,21 +94,28 @@ struct SkillsLibraryManagerView: View {
                 } label: {
                     Label("Install", systemImage: "link.badge.plus")
                 }
-                .disabled(store.librarySelection.isEmpty)
+                .disabled(store.librarySelection.isEmpty || store.isMutationActive)
 
                 Button {
                     Task { await store.checkUpdatesForLibrarySelection() }
                 } label: {
                     Label("Check Updates", systemImage: "arrow.trianglehead.clockwise")
                 }
-                .disabled(store.librarySelection.isEmpty)
+                .disabled(
+                    store.librarySelection.isEmpty ||
+                        store.isMutationActive ||
+                        store.isActive(.checkUpdates, scope: .library)
+                )
 
                 Button {
                     store.requestApplyUpdates(store.librarySelection)
                 } label: {
                     Label("Apply Updates", systemImage: "arrow.down.doc")
                 }
-                .disabled(!store.skills.contains { store.librarySelection.contains($0.id) && $0.hasUpdate })
+                .disabled(
+                    store.isMutationActive ||
+                        !store.skills.contains { store.librarySelection.contains($0.id) && $0.hasUpdate }
+                )
 
                 Menu {
                     Button("Uninstall Everywhere", systemImage: "link.badge.minus") {
@@ -104,7 +128,11 @@ struct SkillsLibraryManagerView: View {
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
-                .disabled(store.librarySelection.isEmpty)
+                .disabled(store.librarySelection.isEmpty || store.isMutationActive)
+
+                if let message = store.activityMessage(for: .library) {
+                    InlineLoadingLabel(message: message)
+                }
 
                 Button {
                     showInspector.toggle()
@@ -191,9 +219,16 @@ struct SkillsLibraryManagerView: View {
                                             .padding(.vertical, 3)
                                             .background(.quinary, in: Capsule())
                                     } else {
-                                        Button("Remove") {
+                                        Button {
                                             Task { await store.removeInstall(install, from: skill) }
+                                        } label: {
+                                            ActivityButtonLabel(
+                                                title: "Remove",
+                                                loadingTitle: "Removing…",
+                                                isLoading: store.isActive(.remove, scope: .skill(skill.id))
+                                            )
                                         }
+                                        .disabled(store.isMutationActive)
                                     }
                                 }
                                 Text(install.installedPath)
@@ -218,10 +253,17 @@ struct SkillsLibraryManagerView: View {
                                 store.upstreamSheetPresented = true
                             }
                         } else {
-                            Button("Check for Updates") {
+                            Button {
                                 store.selectedSkillID = skill.id
                                 Task { await store.checkUpdatesForSelectedSkill() }
+                            } label: {
+                                ActivityButtonLabel(
+                                    title: "Check for Updates",
+                                    loadingTitle: "Checking…",
+                                    isLoading: store.isActive(.checkUpdates, scope: .skill(skill.id))
+                                )
                             }
+                            .disabled(store.isMutationActive)
                         }
                         Button("Uninstall Everywhere") {
                             store.requestUninstallSkills([skill.id])

@@ -26,6 +26,7 @@ struct SkillEditorSheet: View {
                 Spacer()
                 Toggle("Diff", isOn: $showDiff)
                     .toggleStyle(.button)
+                    .disabled(isSaving)
             }
 
             HSplitView {
@@ -33,6 +34,7 @@ struct SkillEditorSheet: View {
                     .font(.system(.body, design: .monospaced))
                     .padding(8)
                     .frame(minWidth: 480)
+                    .disabled(isSaving)
 
                 if showDiff {
                     ScrollView {
@@ -59,23 +61,35 @@ struct SkillEditorSheet: View {
 
             HStack {
                 Button("Revert") { content = store.skillMarkdown(for: skill) }
-                    .disabled(!hasChanges)
+                    .disabled(!hasChanges || isSaving)
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Save") {
+                    .disabled(isSaving)
+                Button {
                     Task { await store.saveSkillMarkdown(for: skill, content: content) }
+                } label: {
+                    ActivityButtonLabel(
+                        title: "Save",
+                        loadingTitle: "Saving…",
+                        isLoading: isSaving
+                    )
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!hasChanges || !validationIssues.isEmpty || !skill.source.editable)
+                .disabled(!hasChanges || !validationIssues.isEmpty || !skill.source.editable || isSaving)
             }
         }
         .padding(20)
         .frame(minWidth: 900, minHeight: 640)
+        .interactiveDismissDisabled(isSaving)
     }
 
     private var hasChanges: Bool {
         content != store.skillMarkdown(for: skill)
+    }
+
+    private var isSaving: Bool {
+        store.isActive(.saveSkill, scope: .skill(skill.id))
     }
 
     private var validationIssues: [String] {

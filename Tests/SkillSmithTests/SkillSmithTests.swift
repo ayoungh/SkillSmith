@@ -3,6 +3,71 @@ import Testing
 @testable import SkillSmithApp
 
 struct SkillSmithTests {
+    private enum ExpectedFailure: Error {
+        case expected
+    }
+
+    @Test
+    func activityRegistryKeepsNestedAndConcurrentTokensIndependent() {
+        var registry = ActivityRegistry()
+        let outer = registry.begin(kind: .destructiveMutation, scope: .mutation, message: "Applying changes…")
+        let refresh = registry.begin(kind: .refresh, scope: .skills, message: "Refreshing skills…")
+        let secondRefresh = registry.begin(kind: .refresh, scope: .skills, message: "Refreshing again…")
+
+        #expect(registry.isMutationActive)
+        #expect(registry.isActive(kind: .refresh, scope: .skills))
+        #expect(registry.message(for: .skills) == "Refreshing again…")
+
+        registry.end(secondRefresh)
+        #expect(registry.isActive(kind: .refresh, scope: .skills))
+        #expect(registry.message(for: .skills) == "Refreshing skills…")
+
+        registry.end(refresh)
+        #expect(!registry.isActive(kind: .refresh, scope: .skills))
+        #expect(registry.isMutationActive)
+
+        registry.end(outer)
+        #expect(!registry.isMutationActive)
+    }
+
+    @Test @MainActor
+    func withActivityCleansUpAfterThrownError() async {
+        let store = SkillSmithStore()
+
+        do {
+            try await store.withActivity(
+                kind: .loadRepository,
+                scope: .imports,
+                message: "Inspecting repository…"
+            ) {
+                #expect(store.isActive(.loadRepository, scope: .imports))
+                throw ExpectedFailure.expected
+            }
+        } catch ExpectedFailure.expected {
+            // Expected.
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(!store.isActive(.loadRepository, scope: .imports))
+    }
+
+    @Test
+    func initialPlaceholderAppearsOnlyBeforeContentOrCompletion() {
+        #expect(LoadingPresentation.showsInitialPlaceholder(
+            hasCompletedInitialDiscovery: false,
+            hasContent: false
+        ))
+        #expect(!LoadingPresentation.showsInitialPlaceholder(
+            hasCompletedInitialDiscovery: false,
+            hasContent: true
+        ))
+        #expect(!LoadingPresentation.showsInitialPlaceholder(
+            hasCompletedInitialDiscovery: true,
+            hasContent: false
+        ))
+    }
+
     @Test
     func defaultRootsIncludeKnownAgents() {
         let roots = SkillSmithPaths.defaultAgentRoots

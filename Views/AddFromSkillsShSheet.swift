@@ -6,6 +6,14 @@ struct AddFromSkillsShSheet: View {
     @State private var skillNames = ""
     @State private var agentNames = ""
 
+    private var isWorking: Bool {
+        store.isActive(scope: .skillsSh)
+    }
+
+    private var isInstalling: Bool {
+        store.isActive(.addSkillsSh, scope: .skillsSh)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
@@ -23,6 +31,7 @@ struct AddFromSkillsShSheet: View {
             }
             .formStyle(.columns)
             .textFieldStyle(.roundedBorder)
+            .disabled(isWorking)
 
             if !store.skillsShRepoOutput.isEmpty {
                 ScrollView {
@@ -37,16 +46,21 @@ struct AddFromSkillsShSheet: View {
             }
 
             HStack {
-                Button("List Available Skills") {
+                Button {
                     Task { await store.previewSkillsShRepo(trimmedRepo) }
+                } label: {
+                    ActivityButtonLabel(
+                        title: "List Available Skills",
+                        loadingTitle: "Listing…",
+                        isLoading: store.isActive(.previewSkillsSh, scope: .skillsSh)
+                    )
                 }
-                .disabled(trimmedRepo.isEmpty || store.isBusy)
+                .disabled(trimmedRepo.isEmpty || isWorking || store.isMutationActive)
 
                 Spacer()
 
-                if store.isBusy {
-                    ProgressView()
-                        .controlSize(.small)
+                if let message = store.activityMessage(for: .skillsSh) {
+                    InlineLoadingLabel(message: message)
                 }
 
                 Button("Cancel") {
@@ -54,8 +68,9 @@ struct AddFromSkillsShSheet: View {
                     store.skillsShRepoOutput = ""
                 }
                 .keyboardShortcut(.cancelAction)
+                .disabled(isInstalling)
 
-                Button("Install") {
+                Button {
                     Task {
                         await store.addSkillsFromSkillsSh(
                             repo: trimmedRepo,
@@ -63,13 +78,20 @@ struct AddFromSkillsShSheet: View {
                             agentNames: tokens(from: agentNames)
                         )
                     }
+                } label: {
+                    ActivityButtonLabel(
+                        title: "Install",
+                        loadingTitle: "Installing…",
+                        isLoading: isInstalling
+                    )
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(trimmedRepo.isEmpty || store.isBusy)
+                .disabled(trimmedRepo.isEmpty || isWorking || store.isMutationActive)
             }
         }
         .padding(24)
         .frame(width: 520)
+        .interactiveDismissDisabled(isInstalling)
     }
 
     private var trimmedRepo: String {

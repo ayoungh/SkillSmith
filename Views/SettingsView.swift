@@ -89,10 +89,21 @@ struct SettingsView: View {
 
     private var diagnosticsTab: some View {
         Form {
-            LabeledContent("skills CLI", value: store.cliDiagnostics)
-            Button("Re-run Discovery") {
-                Task { await store.refresh() }
+            if store.isActive(.diagnostics, scope: .diagnostics) {
+                InlineLoadingLabel(message: "Checking skills CLI…")
+            } else {
+                LabeledContent("skills CLI", value: store.cliDiagnostics)
             }
+            Button {
+                Task { await store.refresh() }
+            } label: {
+                ActivityButtonLabel(
+                    title: "Re-run Discovery",
+                    loadingTitle: "Discovering…",
+                    isLoading: store.isActive(.refresh, scope: .skills)
+                )
+            }
+            .disabled(store.isActive(.refresh, scope: .skills) || store.isMutationActive)
         }
     }
 }

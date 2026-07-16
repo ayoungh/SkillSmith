@@ -117,16 +117,23 @@ private struct AgentDestinationsView: View {
                 } label: {
                     Label("Add Root", systemImage: "folder.badge.plus")
                 }
+                .disabled(store.isMutationActive)
                 Button {
                     showWorkspaceImporter = true
                 } label: {
                     Label("Add Workspace", systemImage: "externaldrive.badge.plus")
                 }
+                .disabled(store.isMutationActive)
                 Button {
                     Task { await store.refresh() }
                 } label: {
-                    Label("Rescan", systemImage: "arrow.clockwise")
+                    if store.isActive(.refresh, scope: .skills) {
+                        ActivityButtonLabel(title: "Rescan", loadingTitle: "Rescanning…", isLoading: true)
+                    } else {
+                        Label("Rescan", systemImage: "arrow.clockwise")
+                    }
                 }
+                .disabled(store.isActive(.refresh, scope: .skills) || store.isMutationActive)
                 Button {
                     showInspector.toggle()
                 } label: {
@@ -210,6 +217,7 @@ private struct AgentDestinationsView: View {
                             }
                         }
                     }
+                    .disabled(store.isMutationActive)
 
                     InspectorSection(title: "Installed Here") {
                         let installed = store.skills.filter { skill in
@@ -231,9 +239,16 @@ private struct AgentDestinationsView: View {
                                     }
                                     Spacer()
                                     if install.isCanonicalSource != true {
-                                        Button("Remove") {
+                                        Button {
                                             Task { await store.removeInstall(install, from: skill) }
+                                        } label: {
+                                            ActivityButtonLabel(
+                                                title: "Remove",
+                                                loadingTitle: "Removing…",
+                                                isLoading: store.isActive(.remove, scope: .skill(skill.id))
+                                            )
                                         }
+                                        .disabled(store.isMutationActive)
                                     }
                                 }
                             }
@@ -243,7 +258,7 @@ private struct AgentDestinationsView: View {
                     Button("Uninstall Everything from \(root.name)", role: .destructive) {
                         store.requestUninstallAll(from: root)
                     }
-                    .disabled(store.installCount(for: root) == 0)
+                    .disabled(store.installCount(for: root) == 0 || store.isMutationActive)
 
                     InspectorSection(title: "Project Workspaces") {
                         if (store.settings.workspaceRoots ?? []).isEmpty {
@@ -439,7 +454,7 @@ private struct AgentDefinitionsView: View {
                     Button("Move Definition to Trash", role: .destructive) {
                         store.requestDeleteDefinition(definition)
                     }
-                    .disabled(!definition.isEditable)
+                    .disabled(!definition.isEditable || store.isMutationActive)
 
                     OperationResultsView(results: store.operationResults)
                 }

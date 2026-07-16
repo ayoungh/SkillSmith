@@ -19,16 +19,23 @@ struct SkillSmithApp: App {
                     Task { await store.refresh() }
                 }
                 .keyboardShortcut("r")
+                .disabled(store.isActive(.refresh, scope: .skills) || store.isMutationActive)
 
                 Button("New Skill") {
                     store.createSheetPresented = true
                 }
                 .keyboardShortcut("n")
+                .disabled(store.isMutationActive)
 
                 Button("Check Updates") {
                     Task { await store.checkUpdatesForSelectedSkill() }
                 }
                 .keyboardShortcut("u")
+                .disabled(
+                    store.selectedSkill == nil ||
+                        store.isMutationActive ||
+                        store.selectedSkill.map { store.isActive(.checkUpdates, scope: .skill($0.id)) } == true
+                )
 
                 Divider()
 

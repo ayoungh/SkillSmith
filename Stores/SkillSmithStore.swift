@@ -36,7 +36,7 @@ final class SkillSmithStore {
     var searchText = ""
     var errorMessage: String?
     var infoMessage: String?
-    var isBusy = false
+    private(set) var hasCompletedInitialDiscovery = false
     var createSheetPresented = false
     var upstreamSheetPresented = false
     var addFromSkillsShPresented = false
@@ -59,6 +59,8 @@ final class SkillSmithStore {
     private let definitionService = AgentDefinitionService()
     private let textDiffService = TextDiffService()
     private var pendingAction: PendingManagementAction?
+    private var activityRegistry = ActivityRegistry()
+    private var hasStartedBootstrap = false
 
     init() {
         let persisted = appStateStore.loadState()
@@ -99,6 +101,45 @@ final class SkillSmithStore {
     var selectedDefinitionLocation: AgentDefinitionLocation? {
         guard let selectedDefinitionLocationID else { return definitionLocations.first }
         return definitionLocations.first(where: { $0.id == selectedDefinitionLocationID })
+    }
+
+    var activeActivities: [AppActivity] {
+        activityRegistry.activities
+    }
+
+    var isMutationActive: Bool {
+        activityRegistry.isMutationActive
+    }
+
+    var isInitialDiscoveryLoading: Bool {
+        shouldShowInitialSkillsPlaceholder &&
+            (isActive(.bootstrap, scope: .app) || isActive(.refresh, scope: .skills))
+    }
+
+    var shouldShowInitialSkillsPlaceholder: Bool {
+        LoadingPresentation.showsInitialPlaceholder(
+            hasCompletedInitialDiscovery: hasCompletedInitialDiscovery,
+            hasContent: !skills.isEmpty
+        )
+    }
+
+    func isActive(_ kind: ActivityKind? = nil, scope: ActivityScope? = nil) -> Bool {
+        activityRegistry.isActive(kind: kind, scope: scope)
+    }
+
+    func activityMessage(for scope: ActivityScope) -> String? {
+        activityRegistry.message(for: scope)
+    }
+
+    func withActivity<T>(
+        kind: ActivityKind,
+        scope: ActivityScope,
+        message: String,
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        let token = activityRegistry.begin(kind: kind, scope: scope, message: message)
+        defer { activityRegistry.end(token) }
+        return try await operation()
     }
 
     var filteredSkills: [SkillRecord] {
@@ -149,14 +190,27 @@ final class SkillSmithStore {
     }
 
     func bootstrap() async {
-        availableRoots = rootDiscovery.discoverRoots(settings: settings)
-        cliDiagnostics = await skillsCLI.checkAvailability()
-        await refresh()
+        guard !hasStartedBootstrap else { return }
+        hasStartedBootstrap = true
+
+        await withActivity(kind: .bootstrap, scope: .app, message: "Discovering skills…") {
+            availableRoots = rootDiscovery.discoverRoots(settings: settings)
+            await withActivity(kind: .diagnostics, scope: .diagnostics, message: "Checking skills CLI…") {
+                cliDiagnostics = await skillsCLI.checkAvailability()
+            }
+            await refresh()
+        }
     }
 
     func refresh() async {
-        isBusy = true
-        defer { isBusy = false }
+        guard !isActive(.refresh, scope: .skills) else { return }
+        await withActivity(kind: .refresh, scope: .skills, message: "Refreshing skills…") {
+            await performRefresh()
+        }
+        hasCompletedInitialDiscovery = true
+    }
+
+    private func performRefresh() async {
 
         let configuredRoots = rootDiscovery.discoverRoots(settings: settings)
         let lockMetadata = skillsLock.loadMetadata()
@@ -307,37 +361,36 @@ final class SkillSmithStore {
     }
 
     func createSkill(spec: SkillDraftSpec, useAI: Bool) async {
-        isBusy = true
-        defer { isBusy = false }
-
-        do {
-            let draft = useAI ? try await aiDraftingService.draftSkill(spec: spec, settings: settings) : libraryService.createTemplateMarkdown(for: spec)
-            draftMarkdown = draft
-            let source = try libraryService.createSkill(from: spec, settings: settings, draftMarkdown: draft)
-            let record = SkillRecord(
-                id: UUID(),
-                name: spec.name,
-                description: spec.description,
-                managementState: .managedLocal,
-                source: source,
-                installMode: .symlink,
-                installedTargets: [],
-                upstream: spec.upstreamSeed.isEmpty ? nil : SkillUpstream(repo: spec.upstreamSeed, path: ".", ref: "main", trackedRevision: nil, lastKnownRemoteRevision: nil, deletedUpstream: false),
-                supportedAgents: spec.supportedAgents,
-                lastCheckedAt: nil,
-                lastDiffSummary: nil,
-                updatePreview: nil,
-                sourceIdentity: SkillSourceIdentity.pathIdentity(source.path)
-            )
-            skills.append(record)
-            skills = sorted(skills)
-            selectedSkillID = record.id
-            librarySelection = [record.id]
-            createSheetPresented = false
-            infoMessage = "Created \(record.name) in the local library."
-            save()
-        } catch {
-            errorMessage = "Could not create skill: \(error.localizedDescription)"
+        await withActivity(kind: .createSkill, scope: .createSkill, message: "Creating skill…") {
+            do {
+                let draft = useAI ? try await aiDraftingService.draftSkill(spec: spec, settings: settings) : libraryService.createTemplateMarkdown(for: spec)
+                draftMarkdown = draft
+                let source = try libraryService.createSkill(from: spec, settings: settings, draftMarkdown: draft)
+                let record = SkillRecord(
+                    id: UUID(),
+                    name: spec.name,
+                    description: spec.description,
+                    managementState: .managedLocal,
+                    source: source,
+                    installMode: .symlink,
+                    installedTargets: [],
+                    upstream: spec.upstreamSeed.isEmpty ? nil : SkillUpstream(repo: spec.upstreamSeed, path: ".", ref: "main", trackedRevision: nil, lastKnownRemoteRevision: nil, deletedUpstream: false),
+                    supportedAgents: spec.supportedAgents,
+                    lastCheckedAt: nil,
+                    lastDiffSummary: nil,
+                    updatePreview: nil,
+                    sourceIdentity: SkillSourceIdentity.pathIdentity(source.path)
+                )
+                skills.append(record)
+                skills = sorted(skills)
+                selectedSkillID = record.id
+                librarySelection = [record.id]
+                createSheetPresented = false
+                infoMessage = "Created \(record.name) in the local library."
+                save()
+            } catch {
+                errorMessage = "Could not create skill: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -352,31 +405,32 @@ final class SkillSmithStore {
 
     func installSkills(_ ids: Set<UUID>, into root: AgentRoot, allowReplacing: Bool = false) async {
         guard !ids.isEmpty else { return }
-        isBusy = true
-        operationResults = []
-        defer { isBusy = false }
+        let scope: ActivityScope = ids.count == 1 ? .skill(ids.first!) : .library
+        await withActivity(kind: .install, scope: scope, message: "Installing…") {
+            operationResults = []
 
-        for skill in skills.filter({ ids.contains($0.id) }) {
-            do {
-                if let metadata = skill.lockMetadata, let agent = root.platform?.cliIdentifier {
-                    let result = try await skillsCLI.addSkills(repo: metadata.source, skillNames: [skill.name], agentNames: [agent])
-                    try requireSuccess(result, action: "Install \(skill.name)")
-                    operationResults.append(OperationResult(summary: "Installed with skills CLI", path: root.path, succeeded: true, detail: skill.name))
-                } else {
-                    let install = try symlinkService.install(skill: skill, into: root, allowReplacing: allowReplacing)
-                    mutateSkill(named: skill.id) { record in
-                        record.installedTargets = mergeTargets(record.installedTargets, install)
+            for skill in skills.filter({ ids.contains($0.id) }) {
+                do {
+                    if let metadata = skill.lockMetadata, let agent = root.platform?.cliIdentifier {
+                        let result = try await skillsCLI.addSkills(repo: metadata.source, skillNames: [skill.name], agentNames: [agent])
+                        try requireSuccess(result, action: "Install \(skill.name)")
+                        operationResults.append(OperationResult(summary: "Installed with skills CLI", path: root.path, succeeded: true, detail: skill.name))
+                    } else {
+                        let install = try symlinkService.install(skill: skill, into: root, allowReplacing: allowReplacing)
+                        mutateSkill(named: skill.id) { record in
+                            record.installedTargets = mergeTargets(record.installedTargets, install)
+                        }
+                        operationResults.append(OperationResult(summary: "Installed", path: install.installedPath, succeeded: true, detail: skill.name))
                     }
-                    operationResults.append(OperationResult(summary: "Installed", path: install.installedPath, succeeded: true, detail: skill.name))
+                } catch {
+                    operationResults.append(OperationResult(summary: "Install failed", path: root.path, succeeded: false, detail: "\(skill.name): \(error.localizedDescription)"))
+                    errorMessage = "Stopped after an install failed: \(error.localizedDescription)"
+                    break
                 }
-            } catch {
-                operationResults.append(OperationResult(summary: "Install failed", path: root.path, succeeded: false, detail: "\(skill.name): \(error.localizedDescription)"))
-                errorMessage = "Stopped after an install failed: \(error.localizedDescription)"
-                break
             }
+            await refresh()
+            if operationResults.allSatisfy(\.succeeded) { infoMessage = "Installed \(operationResults.count) skill operation(s)." }
         }
-        await refresh()
-        if operationResults.allSatisfy(\.succeeded) { infoMessage = "Installed \(operationResults.count) skill operation(s)." }
     }
 
     func requestInstallSkills(_ ids: Set<UUID>, into root: AgentRoot) {
@@ -407,42 +461,43 @@ final class SkillSmithStore {
     }
 
     func removeInstall(_ install: InstalledSkill, from skill: SkillRecord) async {
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let result = try await removeInstallInternal(install, from: skill)
-            operationResults = [result]
-            infoMessage = result.summary
-            await refresh()
-        } catch {
-            errorMessage = "Remove failed: \(error.localizedDescription)"
+        await withActivity(kind: .remove, scope: .skill(skill.id), message: "Removing install…") {
+            do {
+                let result = try await removeInstallInternal(install, from: skill)
+                operationResults = [result]
+                infoMessage = result.summary
+                await refresh()
+            } catch {
+                errorMessage = "Remove failed: \(error.localizedDescription)"
+            }
         }
     }
 
     func uninstallEverywhere(ids: Set<UUID>) async {
         guard !ids.isEmpty else { return }
-        isBusy = true
-        operationResults = []
-        defer { isBusy = false }
+        let scope: ActivityScope = ids.count == 1 ? .skill(ids.first!) : .library
+        await withActivity(kind: .uninstall, scope: scope, message: "Uninstalling…") {
+            operationResults = []
 
-        for skill in skills.filter({ ids.contains($0.id) }) {
-            do {
-                if skill.lockMetadata != nil {
-                    let result = try await skillsCLI.removeSkill(named: skill.name, global: true)
-                    try requireSuccess(result, action: "Uninstall \(skill.name)")
-                    operationResults.append(OperationResult(summary: "Uninstalled everywhere", path: skill.source.path, succeeded: true, detail: skill.name))
-                } else {
-                    for install in skill.installedTargets where install.isCanonicalSource != true {
-                        operationResults.append(try fileOperations.removeInstall(install, roots: availableRoots))
+            for skill in skills.filter({ ids.contains($0.id) }) {
+                do {
+                    if skill.lockMetadata != nil {
+                        let result = try await skillsCLI.removeSkill(named: skill.name, global: true)
+                        try requireSuccess(result, action: "Uninstall \(skill.name)")
+                        operationResults.append(OperationResult(summary: "Uninstalled everywhere", path: skill.source.path, succeeded: true, detail: skill.name))
+                    } else {
+                        for install in skill.installedTargets where install.isCanonicalSource != true {
+                            operationResults.append(try fileOperations.removeInstall(install, roots: availableRoots))
+                        }
                     }
+                } catch {
+                    operationResults.append(OperationResult(summary: "Uninstall failed", path: skill.source.path, succeeded: false, detail: error.localizedDescription))
+                    errorMessage = "Stopped after an uninstall failed: \(error.localizedDescription)"
+                    break
                 }
-            } catch {
-                operationResults.append(OperationResult(summary: "Uninstall failed", path: skill.source.path, succeeded: false, detail: error.localizedDescription))
-                errorMessage = "Stopped after an uninstall failed: \(error.localizedDescription)"
-                break
             }
+            await refresh()
         }
-        await refresh()
     }
 
     func requestUninstallSkills(_ ids: Set<UUID>) {
@@ -532,63 +587,63 @@ final class SkillSmithStore {
             errorMessage = "The confirmation text does not match."
             return
         }
-        isBusy = true
-        operationResults = []
-        defer { isBusy = false }
+        await withActivity(kind: .destructiveMutation, scope: .mutation, message: "Applying changes…") {
+            operationResults = []
 
-        do {
-            switch action {
-            case let .installSkills(ids, rootID, allowReplacing):
-                guard let root = availableRoots.first(where: { $0.id == rootID }) else {
-                    throw NSError(domain: "SkillSmith.Install", code: 1, userInfo: [NSLocalizedDescriptionKey: "The selected destination no longer exists."])
-                }
-                await installSkills(ids, into: root, allowReplacing: allowReplacing)
-            case let .importCandidate(id):
-                selectedImportCandidateID = id
-                await importSelectedCandidate()
-            case let .updateSkills(ids):
-                await applyUpdates(ids: ids)
-            case let .deleteSkills(ids):
-                for skill in skills.filter({ ids.contains($0.id) }) {
-                    for install in skill.installedTargets where install.isCanonicalSource != true {
+            do {
+                switch action {
+                case let .installSkills(ids, rootID, allowReplacing):
+                    guard let root = availableRoots.first(where: { $0.id == rootID }) else {
+                        throw NSError(domain: "SkillSmith.Install", code: 1, userInfo: [NSLocalizedDescriptionKey: "The selected destination no longer exists."])
+                    }
+                    await installSkills(ids, into: root, allowReplacing: allowReplacing)
+                case let .importCandidate(id):
+                    selectedImportCandidateID = id
+                    await importSelectedCandidate()
+                case let .updateSkills(ids):
+                    await applyUpdates(ids: ids)
+                case let .deleteSkills(ids):
+                    for skill in skills.filter({ ids.contains($0.id) }) {
+                        for install in skill.installedTargets where install.isCanonicalSource != true {
+                            operationResults.append(try await removeInstallInternal(install, from: skill))
+                        }
+                        operationResults.append(try fileOperations.deleteManagedSource(skill, libraryPath: settings.libraryPath))
+                        skills.removeAll { $0.id == skill.id }
+                    }
+                    infoMessage = "Moved the selected skill sources to Trash."
+                case let .deleteDefinitions(ids):
+                    for definition in agentDefinitions.filter({ ids.contains($0.id) }) {
+                        try definitionService.delete(definition)
+                        operationResults.append(OperationResult(summary: "Moved definition to Trash", path: definition.path, succeeded: true, detail: definition.name))
+                    }
+                    refreshAgentDefinitions()
+                    infoMessage = "Moved the agent definition to Trash."
+                case let .uninstallSkills(ids):
+                    for skill in skills.filter({ ids.contains($0.id) }) {
+                        try await uninstallSkillInternal(skill)
+                    }
+                    infoMessage = "Uninstalled the selected skills."
+                case let .uninstallRoot(rootID):
+                    guard let root = availableRoots.first(where: { $0.id == rootID }) else { break }
+                    let affected = skills.compactMap { skill -> (SkillRecord, InstalledSkill)? in
+                        guard let install = skill.installedTargets.first(where: { $0.rootID == root.id && $0.isCanonicalSource != true }) else { return nil }
+                        return (skill, install)
+                    }
+                    for (skill, install) in affected {
                         operationResults.append(try await removeInstallInternal(install, from: skill))
                     }
-                    operationResults.append(try fileOperations.deleteManagedSource(skill, libraryPath: settings.libraryPath))
-                    skills.removeAll { $0.id == skill.id }
+                    infoMessage = "Removed installs from \(root.name)."
                 }
-                infoMessage = "Moved the selected skill sources to Trash."
-            case let .deleteDefinitions(ids):
-                for definition in agentDefinitions.filter({ ids.contains($0.id) }) {
-                    try definitionService.delete(definition)
-                    operationResults.append(OperationResult(summary: "Moved definition to Trash", path: definition.path, succeeded: true, detail: definition.name))
-                }
-                refreshAgentDefinitions()
-                infoMessage = "Moved the agent definition to Trash."
-            case let .uninstallSkills(ids):
-                for skill in skills.filter({ ids.contains($0.id) }) {
-                    try await uninstallSkillInternal(skill)
-                }
-                infoMessage = "Uninstalled the selected skills."
-            case let .uninstallRoot(rootID):
-                guard let root = availableRoots.first(where: { $0.id == rootID }) else { break }
-                let affected = skills.compactMap { skill -> (SkillRecord, InstalledSkill)? in
-                    guard let install = skill.installedTargets.first(where: { $0.rootID == root.id && $0.isCanonicalSource != true }) else { return nil }
-                    return (skill, install)
-                }
-                for (skill, install) in affected {
-                    operationResults.append(try await removeInstallInternal(install, from: skill))
-                }
-                infoMessage = "Removed installs from \(root.name)."
+                pendingMutation = nil
+                pendingAction = nil
+                await refresh()
+            } catch {
+                operationResults.append(OperationResult(summary: "Operation failed", path: preview.steps.first?.path ?? "", succeeded: false, detail: error.localizedDescription))
+                errorMessage = "Stopped after an operation failed: \(error.localizedDescription)"
+                pendingMutation = nil
+                pendingAction = nil
+                await refresh()
             }
-            pendingMutation = nil
-            pendingAction = nil
-            await refresh()
-        } catch {
-            operationResults.append(OperationResult(summary: "Operation failed", path: preview.steps.first?.path ?? "", succeeded: false, detail: error.localizedDescription))
-            errorMessage = "Stopped after an operation failed: \(error.localizedDescription)"
-            pendingMutation = nil
-            pendingAction = nil
-            await refresh()
         }
     }
 
@@ -611,18 +666,20 @@ final class SkillSmithStore {
             errorMessage = "Import this skill into the library before editing it."
             return
         }
-        do {
-            let url = URL(fileURLWithPath: skill.source.path).appendingPathComponent("SKILL.md")
-            try fileOperations.writeAtomically(content, to: url)
-            mutateSkill(named: skill.id) { record in
-                record.name = SkillMetadataParser.name(in: content)
-                record.description = SkillMetadataParser.description(in: content)
+        await withActivity(kind: .saveSkill, scope: .skill(skill.id), message: "Saving skill…") {
+            do {
+                let url = URL(fileURLWithPath: skill.source.path).appendingPathComponent("SKILL.md")
+                try fileOperations.writeAtomically(content, to: url)
+                mutateSkill(named: skill.id) { record in
+                    record.name = SkillMetadataParser.name(in: content)
+                    record.description = SkillMetadataParser.description(in: content)
+                }
+                save()
+                infoMessage = "Saved \(skill.name)."
+                await refresh()
+            } catch {
+                errorMessage = "Could not save SKILL.md: \(error.localizedDescription)"
             }
-            save()
-            infoMessage = "Saved \(skill.name)."
-            await refresh()
-        } catch {
-            errorMessage = "Could not save SKILL.md: \(error.localizedDescription)"
         }
     }
 
@@ -659,14 +716,14 @@ final class SkillSmithStore {
     }
 
     func loadRepositoryImports(_ input: String, ref: String = "") async {
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let candidates = try await importService.inspectRepository(input, ref: ref)
-            appendImportCandidates(candidates)
-            infoMessage = "Found \(candidates.count) skill candidate(s)."
-        } catch {
-            errorMessage = "Repository import failed: \(error.localizedDescription)"
+        await withActivity(kind: .loadRepository, scope: .imports, message: "Inspecting repository…") {
+            do {
+                let candidates = try await importService.inspectRepository(input, ref: ref)
+                appendImportCandidates(candidates)
+                infoMessage = "Found \(candidates.count) skill candidate(s)."
+            } catch {
+                errorMessage = "Repository import failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -744,10 +801,9 @@ final class SkillSmithStore {
             return
         }
 
-        isBusy = true
-        operationResults = []
-        defer { isBusy = false }
-        do {
+        await withActivity(kind: .importSkill, scope: .imports, message: "Importing skill…") {
+            operationResults = []
+            do {
             let existing = candidate.existingSkillID.flatMap { id in skills.first(where: { $0.id == id }) }
             var record: SkillRecord
             if candidate.conflictKind == .sameSource, let existing {
@@ -795,11 +851,12 @@ final class SkillSmithStore {
             removeImportCandidate(candidate.id)
             save()
             infoMessage = "Imported \(candidate.name)."
-            await refresh()
-        } catch {
-            operationResults.append(OperationResult(summary: "Import failed", path: candidate.sourcePath, succeeded: false, detail: error.localizedDescription))
-            errorMessage = "Import failed: \(error.localizedDescription)"
-            await refresh()
+                await refresh()
+            } catch {
+                operationResults.append(OperationResult(summary: "Import failed", path: candidate.sourcePath, succeeded: false, detail: error.localizedDescription))
+                errorMessage = "Import failed: \(error.localizedDescription)"
+                await refresh()
+            }
         }
     }
 
@@ -941,19 +998,19 @@ final class SkillSmithStore {
             return
         }
 
-        isBusy = true
-        operationResults = []
-        defer { isBusy = false }
-        for (skill, install) in affected {
-            do {
-                operationResults.append(try await removeInstallInternal(install, from: skill))
-            } catch {
-                operationResults.append(OperationResult(summary: "Uninstall failed", path: install.installedPath, succeeded: false, detail: error.localizedDescription))
-                errorMessage = "Stopped after an uninstall failed: \(error.localizedDescription)"
-                break
+        await withActivity(kind: .uninstall, scope: .agents, message: "Uninstalling…") {
+            operationResults = []
+            for (skill, install) in affected {
+                do {
+                    operationResults.append(try await removeInstallInternal(install, from: skill))
+                } catch {
+                    operationResults.append(OperationResult(summary: "Uninstall failed", path: install.installedPath, succeeded: false, detail: error.localizedDescription))
+                    errorMessage = "Stopped after an uninstall failed: \(error.localizedDescription)"
+                    break
+                }
             }
+            await refresh()
         }
-        await refresh()
     }
 
     func linkUpstream(repo: String, path: String, ref: String) {
@@ -980,9 +1037,11 @@ final class SkillSmithStore {
     }
 
     func checkUpdatesForLibrarySelection() async {
-        for skill in skills.filter({ librarySelection.contains($0.id) }) {
-            await checkUpdates(skill)
-            if errorMessage != nil { break }
+        await withActivity(kind: .checkUpdates, scope: .library, message: "Checking for updates…") {
+            for skill in skills.filter({ librarySelection.contains($0.id) }) {
+                await checkUpdates(skill)
+                if errorMessage != nil { break }
+            }
         }
     }
 
@@ -1035,83 +1094,83 @@ final class SkillSmithStore {
     }
 
     private func checkUpdates(_ skill: SkillRecord) async {
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let preview = try await gitDiffService.checkForUpdates(skill: skill)
-            mutateSkill(named: skill.id) { record in
-                record.updatePreview = preview
-                record.lastCheckedAt = preview.checkedAt
-                record.lastDiffSummary = preview.summary
-                if var upstream = record.upstream {
-                    upstream.lastKnownRemoteRevision = preview.remoteRevision
-                    upstream.deletedUpstream = preview.status == .deletedUpstream
-                    record.upstream = upstream
+        await withActivity(kind: .checkUpdates, scope: .skill(skill.id), message: "Checking for updates…") {
+            do {
+                let preview = try await gitDiffService.checkForUpdates(skill: skill)
+                mutateSkill(named: skill.id) { record in
+                    record.updatePreview = preview
+                    record.lastCheckedAt = preview.checkedAt
+                    record.lastDiffSummary = preview.summary
+                    if var upstream = record.upstream {
+                        upstream.lastKnownRemoteRevision = preview.remoteRevision
+                        upstream.deletedUpstream = preview.status == .deletedUpstream
+                        record.upstream = upstream
+                    }
                 }
+                infoMessage = preview.summary
+                save()
+            } catch {
+                errorMessage = "Update check failed: \(error.localizedDescription)"
             }
-            infoMessage = preview.summary
-            save()
-        } catch {
-            errorMessage = "Update check failed: \(error.localizedDescription)"
         }
     }
 
     func applyUpdateForSelectedSkill() async {
         guard let skill = selectedSkill else { return }
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            guard skill.lockMetadata != nil else {
-                throw NSError(domain: "SkillSmith.Update", code: 1, userInfo: [NSLocalizedDescriptionKey: "Only skills managed by the skills CLI can currently apply updates automatically. Use the diff preview to update local skills manually."])
+        await withActivity(kind: .applyUpdate, scope: .skill(skill.id), message: "Applying update…") {
+            do {
+                guard skill.lockMetadata != nil else {
+                    throw NSError(domain: "SkillSmith.Update", code: 1, userInfo: [NSLocalizedDescriptionKey: "Only skills managed by the skills CLI can currently apply updates automatically. Use the diff preview to update local skills manually."])
+                }
+                let result = try await skillsCLI.updateSkill(named: skill.name)
+                try requireSuccess(result, action: "Update \(skill.name)")
+                infoMessage = "Updated \(skill.name)."
+                await refresh()
+            } catch {
+                errorMessage = "Update failed: \(error.localizedDescription)"
             }
-            let result = try await skillsCLI.updateSkill(named: skill.name)
-            try requireSuccess(result, action: "Update \(skill.name)")
-            infoMessage = "Updated \(skill.name)."
-            await refresh()
-        } catch {
-            errorMessage = "Update failed: \(error.localizedDescription)"
         }
     }
 
     func previewSkillsShRepo(_ repo: String) async {
-        isBusy = true
-        defer { isBusy = false }
-        skillsShRepoOutput = ""
-        do {
-            let result = try await skillsCLI.listRepoSkills(repo: repo)
-            skillsShRepoOutput = stripANSICodes(from: result.stdout.isEmpty ? result.stderr : result.stdout)
-        } catch {
-            errorMessage = "Could not list skills in \(repo): \(error.localizedDescription)"
+        await withActivity(kind: .previewSkillsSh, scope: .skillsSh, message: "Listing available skills…") {
+            skillsShRepoOutput = ""
+            do {
+                let result = try await skillsCLI.listRepoSkills(repo: repo)
+                skillsShRepoOutput = stripANSICodes(from: result.stdout.isEmpty ? result.stderr : result.stdout)
+            } catch {
+                errorMessage = "Could not list skills in \(repo): \(error.localizedDescription)"
+            }
         }
     }
 
     func addSkillsFromSkillsSh(repo: String, skillNames: [String], agentNames: [String]) async {
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let result = try await skillsCLI.addSkills(repo: repo, skillNames: skillNames, agentNames: agentNames)
-            try requireSuccess(result, action: "Install from \(repo)")
-            addFromSkillsShPresented = false
-            skillsShRepoOutput = ""
-            infoMessage = "Installed from \(repo)."
-            await refresh()
-        } catch {
-            errorMessage = "Install from skills.sh failed: \(error.localizedDescription)"
+        await withActivity(kind: .addSkillsSh, scope: .skillsSh, message: "Installing skills…") {
+            do {
+                let result = try await skillsCLI.addSkills(repo: repo, skillNames: skillNames, agentNames: agentNames)
+                try requireSuccess(result, action: "Install from \(repo)")
+                addFromSkillsShPresented = false
+                skillsShRepoOutput = ""
+                infoMessage = "Installed from \(repo)."
+                await refresh()
+            } catch {
+                errorMessage = "Install from skills.sh failed: \(error.localizedDescription)"
+            }
         }
     }
 
     func updateAllSkillsShSkills() async {
-        isBusy = true
-        defer { isBusy = false }
-        do {
-            let result = try await skillsCLI.updateAllGlobalSkills()
-            try requireSuccess(result, action: "Update all skills")
-            let output = stripANSICodes(from: result.stdout.isEmpty ? result.stderr : result.stdout)
-            let lastLine = output.split(separator: "\n", omittingEmptySubsequences: true).last.map(String.init) ?? "Done."
-            infoMessage = "skills.sh update: \(lastLine)"
-            await refresh()
-        } catch {
-            errorMessage = "skills.sh update failed: \(error.localizedDescription)"
+        await withActivity(kind: .updateAll, scope: .skills, message: "Updating all skills…") {
+            do {
+                let result = try await skillsCLI.updateAllGlobalSkills()
+                try requireSuccess(result, action: "Update all skills")
+                let output = stripANSICodes(from: result.stdout.isEmpty ? result.stderr : result.stdout)
+                let lastLine = output.split(separator: "\n", omittingEmptySubsequences: true).last.map(String.init) ?? "Done."
+                infoMessage = "skills.sh update: \(lastLine)"
+                await refresh()
+            } catch {
+                errorMessage = "skills.sh update failed: \(error.localizedDescription)"
+            }
         }
     }
 

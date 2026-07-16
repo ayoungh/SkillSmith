@@ -68,14 +68,19 @@ struct ImportsManagerView: View {
             .togglesInspectorOnRowClick(selection: $selection, isPresented: $showInspector)
             .overlay {
                 if store.importCandidates.isEmpty {
-                    ContentUnavailableView(
-                        "No Imports Queued",
-                        systemImage: "tray.and.arrow.down",
-                        description: Text("Choose folders, drop skills here, scan discovered installs, or load a repository.")
-                    )
+                    if store.isActive(.loadRepository, scope: .imports) {
+                        InlineLoadingLabel(message: "Inspecting repository…")
+                    } else {
+                        ContentUnavailableView(
+                            "No Imports Queued",
+                            systemImage: "tray.and.arrow.down",
+                            description: Text("Choose folders, drop skills here, scan discovered installs, or load a repository.")
+                        )
+                    }
                 }
             }
             .dropDestination(for: URL.self) { urls, _ in
+                guard !store.isMutationActive else { return false }
                 store.queueLocalImports(urls, kind: .droppedItem)
                 return true
             }
@@ -92,10 +97,15 @@ struct ImportsManagerView: View {
                 } label: {
                     Label("Choose Files", systemImage: "folder.badge.plus")
                 }
+                .disabled(store.isMutationActive)
                 Button {
                     store.queueDiscoveredImports()
                 } label: {
                     Label("Scan Existing", systemImage: "magnifyingglass")
+                }
+                .disabled(store.isMutationActive)
+                if let message = store.activityMessage(for: .imports) {
+                    InlineLoadingLabel(message: message)
                 }
                 Button {
                     showInspector.toggle()
@@ -145,11 +155,20 @@ struct ImportsManagerView: View {
             TextField("Ref (optional)", text: $repositoryRef)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 130)
-            Button("Load Repository") {
+            Button {
                 Task { await store.loadRepositoryImports(repository, ref: repositoryRef) }
+            } label: {
+                ActivityButtonLabel(
+                    title: "Load Repository",
+                    loadingTitle: "Inspecting…",
+                    isLoading: store.isActive(.loadRepository, scope: .imports)
+                )
             }
-            .disabled(repository.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isBusy)
-            if store.isBusy { ProgressView().controlSize(.small) }
+            .disabled(
+                repository.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    store.isActive(.loadRepository, scope: .imports) ||
+                    store.isMutationActive
+            )
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -245,12 +264,23 @@ struct ImportsManagerView: View {
                             store.removeImportCandidate(candidate.id)
                             selection.remove(candidate.id)
                         }
+                        .disabled(store.isMutationActive)
                         Spacer()
-                        Button("Import Skill") {
+                        Button {
                             store.requestImportSelectedCandidate()
+                        } label: {
+                            ActivityButtonLabel(
+                                title: "Import Skill",
+                                loadingTitle: "Importing…",
+                                isLoading: store.isActive(.importSkill, scope: .imports)
+                            )
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(!candidate.isValid || (candidate.conflictKind == .sameName && store.importConflictResolution == .cancel) || store.isBusy)
+                        .disabled(
+                            !candidate.isValid ||
+                                (candidate.conflictKind == .sameName && store.importConflictResolution == .cancel) ||
+                                store.isMutationActive
+                        )
                     }
 
                     OperationResultsView(results: store.operationResults)

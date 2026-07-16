@@ -16,6 +16,10 @@ struct CreateSkillSheet: View {
     @State private var desiredTone = "clear and practical"
     @State private var useAI = true
 
+    private var isCreating: Bool {
+        store.isActive(.createSkill, scope: .createSkill)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Create Skill")
@@ -36,13 +40,15 @@ struct CreateSkillSheet: View {
                 Toggle("Draft with AI first", isOn: $useAI)
             }
             .formStyle(.grouped)
+            .disabled(isCreating)
 
             HStack {
                 Spacer()
                 Button("Cancel") {
                     dismiss()
                 }
-                Button("Create Skill") {
+                .disabled(isCreating)
+                Button {
                     let spec = SkillDraftSpec(
                         name: name,
                         description: description,
@@ -56,12 +62,19 @@ struct CreateSkillSheet: View {
                         desiredTone: desiredTone
                     )
                     Task { await store.createSkill(spec: spec, useAI: useAI) }
+                } label: {
+                    ActivityButtonLabel(
+                        title: "Create Skill",
+                        loadingTitle: "Creating…",
+                        isLoading: isCreating
+                    )
                 }
-                .disabled(name.isEmpty || description.isEmpty || whenToUse.isEmpty)
+                .disabled(name.isEmpty || description.isEmpty || whenToUse.isEmpty || isCreating || store.isMutationActive)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
         .frame(width: 560, height: 520)
+        .interactiveDismissDisabled(isCreating)
     }
 }
