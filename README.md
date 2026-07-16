@@ -42,6 +42,37 @@ swift build
 swift test
 ```
 
+## Create a GitHub release
+
+Install and authenticate the [GitHub CLI](https://cli.github.com/), then commit
+and push your changes. Create a release by passing the new version:
+
+```sh
+./script/release.sh 1.0.0
+```
+
+The script runs the test suite, creates an optimized and versioned macOS app
+bundle, signs it, produces a zip and SHA-256 checksum, and publishes both files
+to a new GitHub Release with generated release notes.
+
+By default the app is ad-hoc signed. To use a Developer ID certificate:
+
+```sh
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  ./script/release.sh 1.0.0
+```
+
+Useful release modes:
+
+```sh
+./script/release.sh 1.0.0 --dry-run
+./script/release.sh 1.0.0 --draft
+./script/release.sh 1.0.0 --prerelease
+```
+
+The script does not notarize the app, so macOS may warn people who download it,
+even when it is Developer ID signed.
+
 ## Project layout
 
 ```
